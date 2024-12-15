@@ -314,8 +314,10 @@ class _EncDecBaseModel(ASRModel, ExportableEncDecModel, TranscriptionMixin):
                 raise ValueError(f'Weighted sampler is enabled but sample weights are not provided')
             
             sample_weights = torch.DoubleTensor(sample_weights_list)
+            num_samples = len(sample_weights_list)
+            logging.info(f"Using weighted random sampler with {num_samples} samples")
             sampler = torch.utils.data.sampler.WeightedRandomSampler(
-                weights=sample_weights, num_samples=len(sample_weights_list), replacement=True
+                weights=sample_weights, num_samples=num_samples, replacement=True
             )
             shuffle = False
 
