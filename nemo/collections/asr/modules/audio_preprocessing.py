@@ -305,7 +305,7 @@ class AudioToMelSpectrogramPreprocessor(AudioPreprocessor, Exportable):
         return self.featurizer.filter_banks
 
 
-class AudioToMFCCPreprocessor(AudioPreprocessor):
+class AudioToMFCCPreprocessor(AudioPreprocessor, Exportable):
     """Preprocessor that converts wavs to MFCCs.
     Uses torchaudio.transforms.MFCC.
 
@@ -434,6 +434,14 @@ class AudioToMFCCPreprocessor(AudioPreprocessor):
             log_mels=log,
             melkwargs=mel_kwargs,
         )
+
+    def input_example(self, max_batch: int = 8, max_dim: int = 32000, min_length: int = 200):
+        batch_size = torch.randint(low=1, high=max_batch, size=[1]).item()
+        max_length = torch.randint(low=min_length, high=max_dim, size=[1]).item()
+        signals = torch.rand(size=[batch_size, max_length]) * 2 - 1
+        lengths = torch.randint(low=min_length, high=max_dim, size=[batch_size])
+        lengths[0] = max_length
+        return signals, lengths
 
     def get_features(self, input_signal, length):
         features = self.featurizer(input_signal)

@@ -507,6 +507,8 @@ class EncDecClassificationModel(_EncDecBaseModel):
 
         if cfg.get("is_regression_task", False):
             raise ValueError(f"EndDecClassificationModel requires the flag is_regression_task to be set as false")
+        
+        self.include_preprocessor_for_export = cfg.get('include_preprocessor_for_export', False)
 
         super().__init__(cfg=cfg, trainer=trainer)
 
@@ -600,8 +602,57 @@ class EncDecClassificationModel(_EncDecBaseModel):
         return results
 
     @property
+    def input_module(self):
+        return self.preprocessor if self.include_preprocessor_for_export else self.encoder
+    
+    @property
     def output_types(self) -> Optional[Dict[str, NeuralType]]:
         return {"outputs": NeuralType(('B', 'D'), LogitsType())}
+    
+    def forward_for_export(
+        self, audio_signal, length=None, cache_last_channel=None, cache_last_time=None, cache_last_channel_len=None
+    ):
+        """
+        This forward is used when we need to export the model to ONNX format.
+        Inputs cache_last_channel and cache_last_time are needed to be passed for exporting streaming models.
+
+        Args:
+            input: Tensor that represents a batch of raw audio signals of shape [B, T]. T here represents timesteps.
+            length: Vector of length B, that contains the individual lengths of the audio sequences.
+            cache_last_channel: Tensor of shape [N, B, T, H] which contains the cache for last channel layers
+            cache_last_time: Tensor of shape [N, B, H, T] which contains the cache for last time layers
+                N is the number of such layers which need caching, B is batch size, H is the hidden size of activations,
+                and T is the length of the cache
+
+        Returns:
+            the output of the model
+        """
+        if not self.include_preprocessor_for_export:
+            return super().forward_for_export(audio_signal, length=length, cache_last_channel=cache_last_channel, cache_last_time=cache_last_time, cache_last_channel_len=cache_last_channel_len)
+        
+        preprocessor_fun = getattr(self.preprocessor, 'forward_for_export', self.input_module.forward)
+        processed_signal, processed_signal_length = preprocessor_fun(input_signal=audio_signal, length=length)
+        enc_fun = getattr(self.encoder, 'forward_for_export', self.encoder.forward)
+        if cache_last_channel is None:
+            encoder_output = enc_fun(audio_signal=processed_signal, length=processed_signal_length)
+            if isinstance(encoder_output, tuple):
+                encoder_output = encoder_output[0]
+        else:
+            encoder_output, processed_signal_length, cache_last_channel, cache_last_time, cache_last_channel_len = enc_fun(
+                audio_signal=processed_signal,
+                length=processed_signal_length,
+                cache_last_channel=cache_last_channel,
+                cache_last_time=cache_last_time,
+                cache_last_channel_len=cache_last_channel_len,
+            )
+
+        dec_fun = getattr(self.output_module, 'forward_for_export', self.output_module.forward)
+        ret = dec_fun(encoder_output=encoder_output)
+        if isinstance(ret, tuple):
+            ret = ret[0]
+        if cache_last_channel is not None:
+            ret = (ret, processed_signal_length, cache_last_channel, cache_last_time, cache_last_channel_len)
+        return cast_all(ret, from_dtype=torch.float16, to_dtype=torch.float32)
 
     # PTL-specific methods
     def training_step(self, batch, batch_nb):
