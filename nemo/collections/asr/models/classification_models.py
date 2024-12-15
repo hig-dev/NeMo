@@ -307,12 +307,25 @@ class _EncDecBaseModel(ASRModel, ExportableEncDecModel, TranscriptionMixin):
                     # support datasets that are lists of lists
                     collate_fn = dataset.datasets[0].datasets[0].collate_fn
 
+        sampler = None
+        if config.get('use_weighted_random_sampler', False):
+            sample_weights_list = config.get('sample_weights', None)
+            if sample_weights_list is None or len(sample_weights_list) == 0:
+                raise ValueError(f'Weighted sampler is enabled but sample weights are not provided')
+            
+            sample_weights = torch.DoubleTensor(sample_weights_list)
+            sampler = torch.utils.data.sampler.WeightedRandomSampler(
+                weights=sample_weights, num_samples=len(sample_weights_list), replacement=True
+            )
+            shuffle = False
+
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=batch_size,
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
+            sampler=sampler,
             num_workers=config.get('num_workers', 0),
             pin_memory=config.get('pin_memory', False),
         )
