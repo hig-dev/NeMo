@@ -338,6 +338,19 @@ class AudioToMFCCPreprocessor(AudioPreprocessor, Exportable):
             Defaults to 64
         dct_type: Type of discrete cosine transform to use
         norm: Type of norm to use
+        convertible: Whether to use the ConvertibleMFCC implementation.
+        convertible_spec_mode (str, optional): 'torchaudio' or 'DFT'. Defaults to 'DFT'.
+        convertible_dft_mode (str, optional): 'on_the_fly', 'store', 'input'. Defaults to 'store'.
+            on_the_fly = Dynamically creates DFT matrix during inference
+                model_size = pretty small
+                inference_speed = mild overhead to create DFT matrix
+                training = mild overhead to create DFT during inference calls
+                on-device integration = Easy
+            store = Statically creates DFT matrix, uses precomputed matrix
+                model_size = largest
+                inference_speed = fastest
+                training = use this
+                on-device integration = Easy
         log: Whether to use log-mel spectrograms instead of db-scaled.
             Defaults to True.
     """
@@ -380,6 +393,9 @@ class AudioToMFCCPreprocessor(AudioPreprocessor, Exportable):
         n_mfcc=64,
         dct_type=2,
         norm='ortho',
+        convertible=False,
+        convertible_spec_mode: str = "DFT",
+        convertible_dft_mode: str = "store",
         log=True,
     ):
         self._sample_rate = sample_rate
@@ -425,15 +441,31 @@ class AudioToMFCCPreprocessor(AudioPreprocessor, Exportable):
             )
         mel_kwargs['window_fn'] = window_fn
 
-        # Use torchaudio's implementation of MFCCs as featurizer
-        self.featurizer = torchaudio.transforms.MFCC(
-            sample_rate=self._sample_rate,
-            n_mfcc=n_mfcc,
-            dct_type=dct_type,
-            norm=norm,
-            log_mels=log,
-            melkwargs=mel_kwargs,
-        )
+        if not convertible:
+            # Use torchaudio's implementation of MFCCs as featurizer
+            logging.info('Using torchaudio.transforms.MFCC as featurizer')
+            self.featurizer = torchaudio.transforms.MFCC(
+                sample_rate=self._sample_rate,
+                n_mfcc=n_mfcc,
+                dct_type=dct_type,
+                norm=norm,
+                log_mels=log,
+                melkwargs=mel_kwargs,
+            )
+        else:
+            # Use ConvertibleMFCC as featurizer, allows exporting to ONNX
+            logging.info('Using ConvertibleMFCC as featurizer')
+            from nemo.collections.asr.modules.convertible_mfcc import ConvertibleMFCC
+            self.featurizer = ConvertibleMFCC(
+                sample_rate=self._sample_rate,
+                n_mfcc=n_mfcc,
+                dct_type=dct_type,
+                norm=norm,
+                log_mels=log,
+                dft_mode=convertible_dft_mode,
+                spec_mode=convertible_spec_mode,
+                melkwargs=mel_kwargs,
+            )
 
     def input_example(self, max_batch: int = 8, max_dim: int = 32000, min_length: int = 200):
         batch_size = torch.randint(low=1, high=max_batch, size=[1]).item()
